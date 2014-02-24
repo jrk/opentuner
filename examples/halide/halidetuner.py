@@ -186,6 +186,14 @@ class HalideTuner(opentuner.measurement.MeasurementInterface):
     compute_at = schedule.compute_at
     store_at = schedule.store_at
 
+    sched = dict() # jrk: schedule info for serialization
+
+    with open('schedule.dict', 'w+') as tmp:
+      cfg_dump = cfg.copy()
+      cfg_dump['compute_at'] = compute_at
+      cfg_dump['store_at'] = store_at
+      print >> tmp, cfg_dump
+
     # build list of all used variable names
     var_names = dict()
     var_name_order = dict()
@@ -216,7 +224,10 @@ class HalideTuner(opentuner.measurement.MeasurementInterface):
 
       print >> o, name
 
+      fsched = dict() # jrk: per-function partial schedule for serialization
+
       for var in func['vars']:
+        fsched['splits'] = []
         # handle all splits
         for nesting in xrange(1, self.args.nesting):
           split_factor = cfg.get('{0}_splitfactor_{1}_{2}'.format(
@@ -240,10 +251,17 @@ class HalideTuner(opentuner.measurement.MeasurementInterface):
           print >> o, '.split({0}, {0}, {1}, {2})'.format(
             last_var_name, var_name, split_factor)
 
+          # jrk: serialize the split at this nesting level
+          fsched['splits'].append((last_var_name, last_var_name, var_name, split_factor))
+
+
       # drop unused variables and truncate (Halide supports only 10 reorders)
       if len(var_name_order[name]) > 1:
+        reorder_list = list(reversed(var_name_order[name][:10]))
         print >> o, '.reorder({0})'.format(
-            ', '.join(reversed(var_name_order[name][:10])))
+            ', '.join(reorder_list))
+        # jrk: serialize reorders
+        fsched['reorder'] = reorder_list
 
       # reorder_storage
       store_order_enabled = cfg['{0}_store_order_enabled'.format(name)]
@@ -251,40 +269,59 @@ class HalideTuner(opentuner.measurement.MeasurementInterface):
         store_order = cfg['{0}_store_order'.format(name)]
         if len(store_order) > 1:
           print >> o, '.reorder_storage({0})'.format(', '.join(store_order))
+          fsched['reorder_storage'] = store_order # jrk
 
       if unroll > 1:
-        print >> o, '.unroll({0}, {1})'.format(
-          var_name_order[name][-1], unroll * vectorize)
+        unroll_var = var_name_order[name][-1]
+        unroll_factor = unroll * vectorize
+        print >> o, '.unroll({0}, {1})'.format(unroll_var, unroll_factor)
+        fsched['unroll'] = (unroll_var, unroll_factor) # jrk
 
       if vectorize > 1:
-        print >> o, '.vectorize({0}, {1})'.format(
-          var_name_order[name][-1], vectorize)
+        vectorize_var = var_name_order[name][-1]
+        print >> o, '.vectorize({0}, {1})'.format(vectorize_var, vectorize)
+        fsched['vectorize'] = (vectorize_var, vectorize) # jrk
 
+      # compute somewhere below root
       if (compute_at[name] is not None and
-              len(var_name_order[compute_at[name][0]]) >= compute_at[name][1]):
+          len(var_name_order[compute_at[name][0]]) >= compute_at[name][1]):
         at_func, at_idx = compute_at[name]
         try:
           at_var = var_name_order[at_func][-at_idx]
           print >> o, '.compute_at({0}, {1})'.format(at_func, at_var)
+          fsched['compute_at'] = (at_func, at_var) # jrk
           if not self.args.enable_store_at:
             pass  # disabled
           elif store_at[name] is None:
             print >> o, '.store_root()'
+            fsched['store_at'] = ('', '<root>') # jrk
           elif store_at[name] != compute_at[name]:
             at_func, at_idx = store_at[name]
             at_var = var_name_order[at_func][-at_idx]
             print >> o, '.store_at({0}, {1})'.format(at_func, at_var)
+            fsched['store_at'] = (at_func, at_var) # jrk
         except IndexError:
           # this is expected when at_idx is too large
           # TODO: implement a cleaner fix
           pass
+
+      # compute & store at root
       else:
+        # heuristic: only ever make root functions' outermost dimension parallel
         parallel = cfg['{0}_parallel'.format(name)]
+        parallel_var = var_name_order[name][0]
         if parallel:
-          print >> o, '.parallel({0})'.format(var_name_order[name][0])
+          print >> o, '.parallel({0})'.format(parallel_var)
+          fsched['parallel'] = parallel_var # jrk
         print >> o, '.compute_root()'
+        fsched['compute_at'] = ('', '<root>') # jrk
 
       print >> o, ';'
+      sched[name] = fsched # jrk: save the schedule for this function
+
+    # jrk: serialize the schedule as json
+    with open("schedule.json", 'w') as jssched:
+      json.dump(sched, jssched)
 
     if temp_vars:
       return 'Halide::Var {0};\n{1}'.format(
