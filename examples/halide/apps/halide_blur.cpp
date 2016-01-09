@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
 
     BASELINE_HOOK(blur_y);
 
-    blur_y.compile_to_file("halide_blur", in_img); 
+    blur_y.compile_to_file("halide_blur", {in_img}); 
 
     return 0;
 }

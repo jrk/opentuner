@@ -41,7 +41,7 @@ from opentuner.search.manipulator import ScheduleParameter
 
 COMPILE_CMD = (
   '{args.cxx} "{cpp}" -o "{bin}" -I "{args.halide_dir}/include" '
-  '"{args.halide_dir}/bin/$BUILD_PREFIX/libHalide.a" -ldl -lcurses -lpthread {args.cxxflags} '
+  '"{args.halide_dir}/bin/libHalide.a" -ldl -lcurses -lpthread -lz -std=c++11 {args.cxxflags} '
   '-DAUTOTUNE_N="{args.input_size}" -DAUTOTUNE_TRIALS={args.trials} '
   '-DAUTOTUNE_LIMIT={limit} -fno-rtti')
 
@@ -362,7 +362,7 @@ class HalideTuner(opentuner.measurement.MeasurementInterface):
       assert(binfile)
       cmd = self.args.compile_command.format(
         cpp=cppfile.name, bin=binfile, args=self.args,
-        limit=math.ceil(limit) if limit < float('inf') else 0)
+        limit=60 if limit < float('inf') else 0)
       cmd += ' ' + extra_args
       compile_result = self.call_program(cmd, limit=self.args.limit,
                                          memory_limit=self.args.memory_limit)
